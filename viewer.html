@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Regulation viewer | Universitas Tarumanagara</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; background: #f5f2f1; font-family: Arial, Helvetica, sans-serif; color: #1f1f1f; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; background: #8E1735; color: #fff; }
+  .top .ttl { font-size: 15px; font-weight: bold; line-height: 1.3; }
+  .top .ttl small { display: block; font-size: 12px; font-weight: normal; opacity: .85; }
+  .btn { display: inline-block; font: bold 14px/1.4 Arial, Helvetica, sans-serif; padding: 7px 16px; border-radius: 999px; border: 1px solid #8E1735; background: #fff; color: #8E1735; cursor: pointer; text-decoration: none; }
+  .btn.fill { background: #8E1735; color: #fff; }
+  .btn.ghost { border-color: #fff; background: transparent; color: #fff; }
+  .btn[disabled] { opacity: .4; cursor: default; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; padding: 10px 12px; background: #fff; border-bottom: 1px solid #e9e3e0; }
+  .bar input { width: 56px; font: bold 14px Arial; text-align: center; padding: 6px 4px; border: 1px solid #c9bfbb; border-radius: 8px; }
+  .bar .of { font-size: 14px; font-weight: bold; }
+  .stage { flex: 1; min-height: 0; overflow: auto; padding: 16px; text-align: center; }
+  canvas { background: #fff; box-shadow: 0 4px 16px rgba(60,20,30,.15); max-width: none; }
+  #msg { padding: 60px 10px; color: #6a6462; }
+  @media (max-width: 600px) { .top .ttl small { display: none; } .btn { padding: 6px 12px; } }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="ttl" id="ttl">Loading&hellip;<small id="sub"></small></div>
+  <div><a class="btn ghost" id="dl" href="#" target="_blank" rel="noopener">Download PDF</a></div>
+</div>
+<div class="bar">
+  <button class="btn" id="prev">&lsaquo; Prev</button>
+  <span><input id="pg" type="number" min="1" value="1"> <span class="of" id="of">/ &ndash;</span></span>
+  <button class="btn fill" id="next">Next &rsaquo;</button>
+  <button class="btn" id="fit">Fit width</button>
+  <button class="btn" id="full">Full screen</button>
+</div>
+<div class="stage" id="stage"><canvas id="c" style="display:none"></canvas><div id="msg">Loading document&hellip;</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+(function () {
+  var DOCS = {
+    '39': { file: 'permendiktisaintek-39-2025.pdf', title: 'Ministerial Regulation No. 39 of 2025', sub: 'Quality Assurance in Higher Education' },
+    '10': { file: 'permendiktisaintek-10-2026.pdf', title: 'Ministerial Regulation No. 10 of 2026', sub: 'Amendment to Regulation No. 39 of 2025' }
+  };
+  var q = new URLSearchParams(location.search).get('doc') || '39';
+  var d = DOCS[q] || DOCS['39'];
+  document.getElementById('ttl').firstChild.nodeValue = d.title;
+  document.getElementById('sub').textContent = d.sub;
+  document.title = d.title + ' | Universitas Tarumanagara';
+  var dl = document.getElementById('dl'); dl.href = d.file;
+
+  var WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  var stage = document.getElementById('stage'), canvas = document.getElementById('c'), ctx = canvas.getContext('2d'), msg = document.getElementById('msg');
+  var pgIn = document.getElementById('pg'), of = document.getElementById('of');
+  var pdf = null, num = 1, busy = false, queued = null, fitW = false;
+
+  function fail() { msg.style.display = 'block'; msg.innerHTML = 'The document could not be loaded. <a href="' + d.file + '" style="color:#8E1735;font-weight:bold">Open the PDF directly</a>.'; }
+  if (!window.pdfjsLib) { fail(); return; }
+  try { pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob(['importScripts("' + WORKER + '");'], { type: 'application/javascript' })); }
+  catch (e) { pdfjsLib.GlobalWorkerOptions.workerSrc = WORKER; }
+
+  function render(n) {
+    if (!pdf) return;
+    if (busy) { queued = n; return; }
+    busy = true;
+    pdf.getPage(n).then(function (page) {
+      var base = page.getViewport({ scale: 1 });
+      var w = stage.clientWidth - 32, h = stage.clientHeight - 32;
+      var scale = fitW ? w / base.width : Math.min(w / base.width, h / base.height);
+      var dpr = window.devicePixelRatio || 1;
+      var vp = page.getViewport({ scale: scale * dpr });
+      canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
+      canvas.style.width = Math.floor(vp.width / dpr) + 'px'; canvas.style.height = Math.floor(vp.height / dpr) + 'px';
+      return page.render({ canvasContext: ctx, viewport: vp }).promise;
+    }).then(function () {
+      busy = false; pgIn.value = n;
+      document.getElementById('prev').disabled = n <= 1;
+      document.getElementById('next').disabled = n >= pdf.numPages;
+      if (queued !== null) { var x = queued; queued = null; render(x); }
+    }).catch(function () { busy = false; fail(); });
+  }
+  function go(n) { if (!pdf) return; n = Math.max(1, Math.min(pdf.numPages, n)); num = n; render(n); stage.scrollTop = 0; }
+
+  document.getElementById('prev').onclick = function () { go(num - 1); };
+  document.getElementById('next').onclick = function () { go(num + 1); };
+  pgIn.onchange = function () { go(parseInt(pgIn.value, 10) || 1); };
+  var fb = document.getElementById('fit');
+  fb.onclick = function () { fitW = !fitW; fb.textContent = fitW ? 'Fit page' : 'Fit width'; render(num); };
+  document.getElementById('full').onclick = function () {
+    var el = document.documentElement;
+    if (document.fullscreenElement) document.exitFullscreen(); else if (el.requestFullscreen) el.requestFullscreen();
+  };
+  document.addEventListener('keydown', function (e) {
+    if (e.target === pgIn) return;
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') { go(num + 1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { go(num - 1); e.preventDefault(); }
+  });
+  var sx = null;
+  stage.addEventListener('touchstart', function (e) { sx = e.touches[0].clientX; }, { passive: true });
+  stage.addEventListener('touchend', function (e) {
+    if (sx === null || fitW) return;
+    var dx = e.changedTouches[0].clientX - sx; sx = null;
+    if (Math.abs(dx) > 50) go(dx < 0 ? num + 1 : num - 1);
+  }, { passive: true });
+  var t; window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(function () { render(num); }, 200); });
+  document.addEventListener('fullscreenchange', function () { setTimeout(function () { render(num); }, 150); });
+
+  pdfjsLib.getDocument(d.file).promise.then(function (doc) {
+    pdf = doc; pgIn.max = doc.numPages; of.textContent = '/ ' + doc.numPages;
+    msg.style.display = 'none'; canvas.style.display = 'inline-block'; render(1);
+  }).catch(fail);
+})();
+</script>
+</body>
+</html>
